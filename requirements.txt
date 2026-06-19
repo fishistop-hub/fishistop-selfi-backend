@@ -3,6 +3,6 @@ flask-cors==4.0.0
 google-auth==2.27.0
 google-api-python-client==2.118.0
 deepface==0.0.93
-tensorflow==2.15.0
-numpy==1.26.4
-opencv-python-headless==4.9.0.80
+tensorflow-cpu==2.13.0
+numpy==1.24.3
+opencv-python-headless==4.8.1.78
