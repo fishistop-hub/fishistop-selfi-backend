@@ -2,19 +2,25 @@ import os
 import json
 import base64
 import tempfile
+import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import io
-import face_recognition
-from PIL import Image
+import cv2
+import insightface
+from insightface.app import FaceAnalysis
 
 app = Flask(__name__)
 CORS(app)
 
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+
+# Load face model once at startup
+face_app = FaceAnalysis(providers=['CPUExecutionProvider'])
+face_app.prepare(ctx_id=0, det_size=(640, 640))
 
 def get_drive_service():
     creds_json = os.environ.get('GOOGLE_CREDENTIALS')
@@ -30,7 +36,7 @@ def list_photos(folder_id):
     service = get_drive_service()
     results = service.files().list(
         q=f"'{folder_id}' in parents and mimeType contains 'image/'",
-        fields="files(id, name, mimeType)",
+        fields="files(id, name)",
         pageSize=1000
     ).execute()
     return results.get('files', [])
@@ -46,14 +52,16 @@ def download_photo(file_id):
     buf.seek(0)
     return buf.read()
 
-def get_face_encoding(image_bytes):
-    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
-        f.write(image_bytes)
-        path = f.name
-    img = face_recognition.load_image_file(path)
-    encodings = face_recognition.face_encodings(img)
-    os.unlink(path)
-    return encodings[0] if encodings else None
+def get_embedding(image_bytes):
+    arr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    faces = face_app.get(img)
+    if not faces:
+        return None
+    return faces[0].embedding
+
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -72,8 +80,8 @@ def match():
         selfie_b64 = selfie_b64.split(',')[-1]
         selfie_bytes = base64.b64decode(selfie_b64)
 
-        selfie_encoding = get_face_encoding(selfie_bytes)
-        if selfie_encoding is None:
+        selfie_embedding = get_embedding(selfie_bytes)
+        if selfie_embedding is None:
             return jsonify({'error': 'No face detected in selfie'}), 400
 
         photos = list_photos(event_id)
@@ -84,14 +92,14 @@ def match():
         for photo in photos:
             try:
                 photo_bytes = download_photo(photo['id'])
-                photo_encoding = get_face_encoding(photo_bytes)
-                if photo_encoding is None:
+                photo_embedding = get_embedding(photo_bytes)
+                if photo_embedding is None:
                     continue
-                result = face_recognition.compare_faces([selfie_encoding], photo_encoding, tolerance=0.5)
-                if result[0]:
+                sim = cosine_similarity(selfie_embedding, photo_embedding)
+                if sim > 0.4:
                     matches.append(f"https://drive.google.com/uc?id={photo['id']}&export=view")
             except Exception as e:
-                print(f"Error: {e}")
+                print(f"Error processing photo: {e}")
                 continue
 
         return jsonify({'matches': matches, 'count': len(matches)})
