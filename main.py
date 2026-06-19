@@ -8,13 +8,12 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import io
-import numpy as np
-from deepface import DeepFace
+import face_recognition
+from PIL import Image
 
 app = Flask(__name__)
 CORS(app)
 
-# ── Google Drive Setup ─────────────────────────────────────────────────────
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
 def get_drive_service():
@@ -38,56 +37,24 @@ def list_photos(folder_id):
 
 def download_photo(file_id):
     service = get_drive_service()
-    request = service.files().get_media(fileId=file_id)
+    req = service.files().get_media(fileId=file_id)
     buf = io.BytesIO()
-    downloader = MediaIoBaseDownload(buf, request)
+    downloader = MediaIoBaseDownload(buf, req)
     done = False
     while not done:
         _, done = downloader.next_chunk()
     buf.seek(0)
     return buf.read()
 
-# ── Face Matching ──────────────────────────────────────────────────────────
-def match_face(selfie_data, event_photos):
-    matches = []
-
-    # Save selfie to temp file
+def get_face_encoding(image_bytes):
     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
-        f.write(selfie_data)
-        selfie_path = f.name
+        f.write(image_bytes)
+        path = f.name
+    img = face_recognition.load_image_file(path)
+    encodings = face_recognition.face_encodings(img)
+    os.unlink(path)
+    return encodings[0] if encodings else None
 
-    for photo in event_photos:
-        try:
-            photo_bytes = download_photo(photo['id'])
-            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as f:
-                f.write(photo_bytes)
-                photo_path = f.name
-
-            result = DeepFace.verify(
-                selfie_path,
-                photo_path,
-                model_name='VGG-Face',
-                enforce_detection=False
-            )
-
-            if result['verified']:
-                # Return public Drive link
-                matches.append({
-                    'id': photo['id'],
-                    'name': photo['name'],
-                    'url': f"https://drive.google.com/uc?id={photo['id']}&export=view"
-                })
-
-            os.unlink(photo_path)
-
-        except Exception as e:
-            print(f"Error processing photo {photo['name']}: {e}")
-            continue
-
-    os.unlink(selfie_path)
-    return matches
-
-# ── Routes ─────────────────────────────────────────────────────────────────
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'ok'})
@@ -102,22 +69,32 @@ def match():
         if not selfie_b64 or not event_id:
             return jsonify({'error': 'Missing selfie or eventId'}), 400
 
-        # Decode selfie from base64
-        selfie_b64 = selfie_b64.split(',')[-1]  # remove data:image/jpeg;base64,
+        selfie_b64 = selfie_b64.split(',')[-1]
         selfie_bytes = base64.b64decode(selfie_b64)
 
-        # Get photos from Drive folder
+        selfie_encoding = get_face_encoding(selfie_bytes)
+        if selfie_encoding is None:
+            return jsonify({'error': 'No face detected in selfie'}), 400
+
         photos = list_photos(event_id)
         if not photos:
-            return jsonify({'matches': [], 'message': 'No photos in this event folder'})
+            return jsonify({'matches': [], 'message': 'No photos found'})
 
-        # Match faces
-        matched = match_face(selfie_bytes, photos)
+        matches = []
+        for photo in photos:
+            try:
+                photo_bytes = download_photo(photo['id'])
+                photo_encoding = get_face_encoding(photo_bytes)
+                if photo_encoding is None:
+                    continue
+                result = face_recognition.compare_faces([selfie_encoding], photo_encoding, tolerance=0.5)
+                if result[0]:
+                    matches.append(f"https://drive.google.com/uc?id={photo['id']}&export=view")
+            except Exception as e:
+                print(f"Error: {e}")
+                continue
 
-        return jsonify({
-            'matches': [m['url'] for m in matched],
-            'count': len(matched)
-        })
+        return jsonify({'matches': matches, 'count': len(matches)})
 
     except Exception as e:
         print(f"Error: {e}")
