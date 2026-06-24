@@ -96,9 +96,10 @@ def find_photos():
         return jsonify({"error": f"Drive error: {str(e)}"}), 500
 
     if not files:
-        return jsonify({"matches": [], "total_scanned": 0})
+    return jsonify({"matches": [], "total_scanned": 0})
+files = files[:50]  # limit for free tier
 
-    matches = []
+matches = []
     for f in files:
         try:
             photo_bytes = download_image_bytes(f["id"])
