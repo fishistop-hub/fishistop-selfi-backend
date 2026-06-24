@@ -3,6 +3,7 @@ import io
 import json
 import base64
 import boto3
+import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from google.oauth2 import service_account
@@ -53,7 +54,6 @@ def list_images_in_folder(folder_id):
 
 
 def download_image_bytes(file_id):
-    import requests as req_lib
     service = get_drive_service()
     file = service.files().get(
         fileId=file_id,
@@ -63,13 +63,12 @@ def download_image_bytes(file_id):
     if not thumbnail_url:
         raise Exception("No thumbnail available")
     thumbnail_url = thumbnail_url.replace("=s220", "=s1000")
-    resp = req_lib.get(thumbnail_url)
+    resp = requests.get(thumbnail_url)
     return resp.content
 
 
 # ── Rekognition Collection helpers ───────────────────────────────────────────
 def get_collection_id(folder_id):
-    """Each Drive folder gets its own Rekognition collection."""
     return f"fishi-{folder_id}"
 
 
@@ -89,28 +88,20 @@ def health():
 
 @app.route("/index-event", methods=["POST", "GET"])
 def index_event():
-    """
-    Index all photos in a Drive folder into a Rekognition collection.
-    Call this ONCE per event after uploading photos to Drive.
-    
-    Body: { "event_folder_id": "..." }
-    """
     if request.method == "GET":
-            folder_id = request.args.get("event_folder_id")
-        else:
-            data = request.get_json(force=True)
-            folder_id = data.get("event_folder_id")
+        folder_id = request.args.get("event_folder_id")
+    else:
+        data = request.get_json(force=True)
+        folder_id = data.get("event_folder_id")
 
     if not folder_id:
         return jsonify({"error": "event_folder_id is required"}), 400
 
     collection_id = get_collection_id(folder_id)
 
-    # Create collection if it doesn't exist
     if not collection_exists(collection_id):
         rekognition.create_collection(CollectionId=collection_id)
 
-    # List all photos in Drive folder
     try:
         files = list_images_in_folder(folder_id)
     except Exception as e:
@@ -124,7 +115,7 @@ def index_event():
             rekognition.index_faces(
                 CollectionId=collection_id,
                 Image={"Bytes": photo_bytes},
-                ExternalImageId=f["id"],  # store Drive file ID
+                ExternalImageId=f["id"],
                 DetectionAttributes=[],
                 MaxFaces=10,
             )
@@ -144,12 +135,6 @@ def index_event():
 
 @app.route("/find-photos", methods=["POST"])
 def find_photos():
-    """
-    Search for a face in the event collection.
-    Fast — uses Rekognition collection search, no photo downloading.
-    
-    Body: { "selfie": "<base64>", "event_folder_id": "..." }
-    """
     data = request.get_json(force=True)
     selfie_b64 = data.get("selfie")
     folder_id = data.get("event_folder_id")
@@ -166,14 +151,12 @@ def find_photos():
 
     collection_id = get_collection_id(folder_id)
 
-    # Check if collection exists
     if not collection_exists(collection_id):
         return jsonify({
             "error": "Event not indexed yet. Please run /index-event first.",
             "matches": []
         }), 400
 
-    # Search collection with selfie
     try:
         response = rekognition.search_faces_by_image(
             CollectionId=collection_id,
@@ -188,7 +171,6 @@ def find_photos():
 
     face_matches = response.get("FaceMatches", [])
 
-    # Build results using Drive file IDs stored in ExternalImageId
     matches = []
     seen_ids = set()
     for match in face_matches:
@@ -210,7 +192,6 @@ def find_photos():
 
 @app.route("/collection-status", methods=["GET"])
 def collection_status():
-    """Check if an event folder has been indexed."""
     folder_id = request.args.get("event_folder_id")
     if not folder_id:
         return jsonify({"error": "event_folder_id required"}), 400
