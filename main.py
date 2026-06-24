@@ -96,10 +96,10 @@ def index_event():
     Body: { "event_folder_id": "..." }
     """
     if request.method == "GET":
-    folder_id = request.args.get("event_folder_id")
-else:
-    data = request.get_json(force=True)
-    folder_id = data.get("event_folder_id")
+            folder_id = request.args.get("event_folder_id")
+        else:
+            data = request.get_json(force=True)
+            folder_id = data.get("event_folder_id")
 
     if not folder_id:
         return jsonify({"error": "event_folder_id is required"}), 400
