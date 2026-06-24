@@ -83,7 +83,7 @@ def health():
     return jsonify({"status": "ok", "service": "fishi-selfi-backend"})
 
 
-@app.route("/index-event", methods=["POST"])
+@app.route("/index-event", methods=["POST", "GET"])
 def index_event():
     """
     Index all photos in a Drive folder into a Rekognition collection.
