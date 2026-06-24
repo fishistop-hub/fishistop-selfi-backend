@@ -53,14 +53,18 @@ def list_images_in_folder(folder_id):
 
 
 def download_image_bytes(file_id):
+    import requests as req_lib
     service = get_drive_service()
-    req = service.files().get_media(fileId=file_id)
-    buf = io.BytesIO()
-    downloader = MediaIoBaseDownload(buf, req)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    return buf.getvalue()
+    file = service.files().get(
+        fileId=file_id,
+        fields="thumbnailLink"
+    ).execute()
+    thumbnail_url = file.get("thumbnailLink")
+    if not thumbnail_url:
+        raise Exception("No thumbnail available")
+    thumbnail_url = thumbnail_url.replace("=s220", "=s1000")
+    resp = req_lib.get(thumbnail_url)
+    return resp.content
 
 
 # ── Rekognition Collection helpers ───────────────────────────────────────────
