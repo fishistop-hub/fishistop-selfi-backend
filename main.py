@@ -97,7 +97,7 @@ def find_photos():
 
     if not files:
     return jsonify({"matches": [], "total_scanned": 0})
-files = files[:50]  # limit for free tier
+files = files[:10]  # limit for free tier
 
 matches = []
     for f in files:
