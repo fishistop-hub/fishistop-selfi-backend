@@ -59,7 +59,7 @@ def download_image_bytes(file_id):
         _, done = downloader.next_chunk()
     return buf.getvalue()
 
-def compare_faces(selfie_bytes, photo_bytes, threshold=80.0):
+def compare_faces(selfie_bytes, photo_bytes, threshold=70.0):
     try:
         resp = rekognition.compare_faces(
             SourceImage={"Bytes": selfie_bytes},
