@@ -162,7 +162,7 @@ def find_photos():
             CollectionId=collection_id,
             Image={"Bytes": selfie_bytes},
             MaxFaces=100,
-            FaceMatchThreshold=70.0,
+            FaceMatchThreshold=85.0,
         )
     except rekognition.exceptions.InvalidParameterException:
         return jsonify({"matches": [], "total_scanned": 0, "message": "No face detected in selfie"})
