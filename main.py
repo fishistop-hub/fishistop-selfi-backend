@@ -29,7 +29,7 @@ def get_drive_service():
     creds_dict = json.loads(creds_json)
     creds = service_account.Credentials.from_service_account_info(
         creds_dict,
-        scopes=["https://www.googleapis.com/auth/drive.readonly"],
+        scopes=["https://www.googleapis.com/auth/drive"],
     )
     return build("drive", "v3", credentials=creds)
 
@@ -188,6 +188,83 @@ def find_photos():
         "matches": matches,
         "total_scanned": len(face_matches),
     })
+
+
+@app.route("/create-guest-folder", methods=["POST"])
+def create_guest_folder():
+    """
+    Create a shortcut folder in Google Drive for guest photos.
+    Body: { "file_ids": ["id1", "id2", ...], "guest_number": 1, "event_name": "BVD" }
+    """
+    data = request.get_json(force=True)
+    file_ids = data.get("file_ids", [])
+    guest_number = data.get("guest_number", "Guest")
+    event_name = data.get("event_name", "Event")
+    parent_folder_id = data.get("parent_folder_id", None)
+
+    if not file_ids:
+        return jsonify({"error": "file_ids is required"}), 400
+
+    try:
+        service = get_drive_service()
+
+        # Create guest folder
+        folder_name = f"FISHI_{event_name}_{guest_number:03d}" if isinstance(guest_number, int) else f"FISHI_{event_name}_{guest_number}"
+        
+        folder_metadata = {
+            "name": folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+        }
+        if parent_folder_id:
+            folder_metadata["parents"] = [parent_folder_id]
+
+        folder = service.files().create(
+            body=folder_metadata,
+            fields="id, webViewLink"
+        ).execute()
+
+        folder_id = folder.get("id")
+        folder_link = folder.get("webViewLink")
+
+        # Create shortcuts for each matched photo
+        shortcuts_created = 0
+        for file_id in file_ids:
+            try:
+                shortcut_metadata = {
+                    "name": f"photo_{file_id}",
+                    "mimeType": "application/vnd.google-apps.shortcut",
+                    "shortcutDetails": {
+                        "targetId": file_id
+                    },
+                    "parents": [folder_id]
+                }
+                service.files().create(
+                    body=shortcut_metadata,
+                    fields="id"
+                ).execute()
+                shortcuts_created += 1
+            except Exception:
+                continue
+
+        # Make folder publicly accessible
+        service.permissions().create(
+            fileId=folder_id,
+            body={
+                "role": "reader",
+                "type": "anyone"
+            }
+        ).execute()
+
+        return jsonify({
+            "folder_id": folder_id,
+            "folder_link": folder_link,
+            "folder_name": folder_name,
+            "photos_added": shortcuts_created,
+            "status": "ready"
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/collection-status", methods=["GET"])
